@@ -1,0 +1,13 @@
+#cloud-config
+
+
+users:
+ - name: appuser
+   sudo: ALL=(ALL) NOPASSWD:ALL
+   home: /home/appuser
+   shell: /bin/bash
+   ssh_authorized_keys:
+     - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPKgOd8GpWGnt1D7UgXDjEvvJbSHiDEwLvAuXDl4De6G ubuntu@de-project2-group18
+
+byobu_default: system
+
