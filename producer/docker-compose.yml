@@ -1,0 +1,15 @@
+services:
+  producer:
+    image: theodorafc02/de-2-project:latest
+    container_name: producer
+    env_file:
+      - /home/ubuntu/.broker_env
+      - /home/ubuntu/.github_tokens
+    environment:
+      DAYS_BACK: "7"
+      TOPIC: "repos.raw"
+    volumes:
+      - ./producer.py:/app/producer.py:ro
+    command: python /app/producer.py
+    # Runs once over the date range, then exits. Don't auto-restart.
+    restart: "no"

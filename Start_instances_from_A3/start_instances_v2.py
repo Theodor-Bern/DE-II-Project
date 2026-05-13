@@ -57,10 +57,10 @@ def load_cfg(filename):
         return open(path)
     sys.exit(f"ERROR: {filename} not found in current directory")
 
-cfg_producer   = load_cfg('producer-cloud-cfg.txt')
-cfg_consumer1  = load_cfg('consumer1-cloud-cfg.txt')
-cfg_consumer2  = load_cfg('consumer2-cloud-cfg.txt')
-cfg_aggregator = load_cfg('aggregator-cloud-cfg.txt')
+cfg_producer   = load_cfg('Producer-cloud-cfg.txt')
+cfg_consumer1  = load_cfg('Consumer1-cloud-cfg.txt')
+cfg_consumer2  = load_cfg('Consumer2-cloud-cfg.txt')
+cfg_aggregator = load_cfg('Aggregator-cloud-cfg.txt')
 
 # Launch all 4 VMs
 print("\nCreating instances...")

@@ -1,0 +1,39 @@
+#cloud-config
+# Broker VM — provisions Docker so we can run Pulsar standalone.
+# The actual docker-compose.yml is SCP'd from VM1 (control node) after boot.
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - netcat-openbsd
+
+bootcmd:
+  - mkdir -p /home/ubuntu
+  - chown ubuntu:ubuntu /home/ubuntu
+
+runcmd:
+  # ── Install Docker via official repo ───────────────────────────────────────
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+    https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+    > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - usermod -aG docker ubuntu
+  - systemctl enable --now docker
+
+  # ── Pre-pull Pulsar image so first compose-up is fast ──────────────────────
+  - docker pull apachepulsar/pulsar:3.2.0
+
+  # ── Marker file so VM1 knows provisioning finished ─────────────────────────
+  - touch /home/ubuntu/.cloud-init-done
+  - chown ubuntu:ubuntu /home/ubuntu/.cloud-init-done
+
+final_message: "Broker VM provisioned. SCP docker-compose.yml from VM1 and run: docker compose up -d"

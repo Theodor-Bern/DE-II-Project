@@ -1,95 +1,120 @@
-# http://docs.openstack.org/developer/python-novaclient/ref/v2/servers.html
 import time, os, sys, random, re
-import inspect
 from os import environ as env
+from novaclient import client
+from keystoneauth1 import loading, session
 
-from  novaclient import client
-import keystoneclient.v3.client as ksclient
-from keystoneauth1 import loading
-from keystoneauth1 import session
+# ── Configuration ─────────────────────────────────────────────────────────────
+KEY_NAME             = "Group18-key"
+FLAVOR               = "ssc.medium"
+IMAGE_NAME           = "Ubuntu 22.04 - 2024.01.15"
+PRIVATE_NET          = "UPPMAX 2026/1-24 Internal IPv4 Network"
+SECURITY_GROUPS      = ["default"]
+# ─────────────────────────────────────────────────────────────────────────────
 
-
-flavor = "ssc.medium" 
-private_net = "UPPMAX 2026/1-24 Internal IPv4 Network"
-floating_ip_pool_name = None
-floating_ip = None
-image_name = "Ubuntu 22.04 - 2024.01.15"
-
-identifier = random.randint(1000,9999)
+identifier = random.randint(1000, 9999)
 
 loader = loading.get_plugin_loader('password')
-
-auth = loader.load_from_options(auth_url=env['OS_AUTH_URL'],
-                                username=env['OS_USERNAME'],
-                                password=env['OS_PASSWORD'],
-                                project_name=env['OS_PROJECT_NAME'],
-                                project_domain_id=env['OS_PROJECT_DOMAIN_ID'],
-                                #project_id=env['OS_PROJECT_ID'],
-                                user_domain_name=env['OS_USER_DOMAIN_NAME'])
-
+auth = loader.load_from_options(
+    auth_url         = env['OS_AUTH_URL'],
+    username         = env['OS_USERNAME'],
+    password         = env['OS_PASSWORD'],
+    project_name     = env['OS_PROJECT_NAME'],
+    project_domain_id= env['OS_PROJECT_DOMAIN_ID'],
+    user_domain_name = env['OS_USER_DOMAIN_NAME']
+)
 sess = session.Session(auth=auth)
 nova = client.Client('2.1', session=sess)
-print ("user authorization completed.")
+print("User authorization completed.")
 
-image = nova.glance.find_image(image_name)
+image  = nova.glance.find_image(IMAGE_NAME)
+flavor = nova.flavors.find(name=FLAVOR)
+net    = nova.neutron.find_network(PRIVATE_NET)
+nics   = [{'net-id': net.id}]
 
-flavor = nova.flavors.find(name=flavor)
 
-if private_net != None:
-    net = nova.neutron.find_network(private_net)
-    nics = [{'net-id': net.id}]
-else:
-    sys.exit("private-net not defined.")
+def read_cfg(filename):
+    """Read a cloud-cfg file as a string (so we can do template substitution)."""
+    path = os.path.join(os.getcwd(), filename)
+    if not os.path.isfile(path):
+        sys.exit(f"ERROR: {filename} not found in current directory")
+    with open(path) as f:
+        return f.read()
 
-#print("Path at terminal when executing this file")
-#print(os.getcwd() + "\n")
-cfg_file_path =  os.getcwd()+'/prod-cloud-cfg.txt'
-if os.path.isfile(cfg_file_path):
-    userdata_prod = open(cfg_file_path)
-else:
-    sys.exit("prod-cloud-cfg.txt is not in current working directory")
 
-cfg_file_path =  os.getcwd()+'/dev-cloud-cfg.txt'
-if os.path.isfile(cfg_file_path):
-    userdata_dev = open(cfg_file_path)
-else:
-    sys.exit("dev-cloud-cfg.txt is not in current working directory")    
+def launch(name, userdata_string):
+    """Launch a VM with userdata passed as a string."""
+    return nova.servers.create(
+        name           = f"{name}-{identifier}",
+        image          = image,
+        flavor         = flavor,
+        key_name       = KEY_NAME,
+        userdata       = userdata_string,
+        nics           = nics,
+        security_groups= SECURITY_GROUPS
+    )
 
-secgroups = ['default']
 
-print ("Creating instances ... ")
-instance_prod = nova.servers.create(name="prod_server_with_docker_"+str(identifier), image=image, flavor=flavor, key_name='Group18-key',userdata=userdata_prod, nics=nics,security_groups=secgroups)
-instance_dev = nova.servers.create(name="dev_server_"+str(identifier), image=image, flavor=flavor, key_name='Group18-key',userdata=userdata_dev, nics=nics,security_groups=secgroups)
-inst_status_prod = instance_prod.status
-inst_status_dev = instance_dev.status
+def wait_for_ip(instance):
+    """Block until the instance has been assigned a private IPv4 address."""
+    while True:
+        updated = nova.servers.get(instance.id)
+        if updated.networks.get(PRIVATE_NET):
+            for network in updated.networks[PRIVATE_NET]:
+                if re.match(r'\d+\.\d+\.\d+\.\d+', network):
+                    return network, updated
+        time.sleep(5)
 
-print ("waiting for 10 seconds.. ")
+
+def wait_for_active(instance, name):
+    """Block until the instance is ACTIVE."""
+    while True:
+        updated = nova.servers.get(instance.id)
+        if updated.status == 'ACTIVE':
+            return updated
+        print(f"  {name} is in {updated.status} state...")
+        time.sleep(5)
+
+
+# ── Phase 1: Launch broker, wait for IP ───────────────────────────────────────
+print("\n[Phase 1] Launching broker VM...")
+cfg_broker = read_cfg('broker-cloud-cfg.txt')
+broker = launch("broker-vm", cfg_broker)
+
+print("Waiting for broker IP assignment...")
+broker_ip, broker = wait_for_ip(broker)
+print(f"Broker IP: {broker_ip}")
+
+# ── Phase 2: Inject broker IP into the other cloud-cfg files, then launch ─────
+print("\n[Phase 2] Launching producer, consumer, aggregator with BROKER_IP injected...")
+
+cfg_producer   = read_cfg('producer-cloud-cfg.txt').replace('{{BROKER_IP}}', broker_ip)
+cfg_consumer   = read_cfg('consumer-cloud-cfg.txt').replace('{{BROKER_IP}}', broker_ip)
+cfg_aggregator = read_cfg('aggregator-cloud-cfg.txt').replace('{{BROKER_IP}}', broker_ip)
+
+producer   = launch("producer-vm",   cfg_producer)
+consumer   = launch("consumer-vm",   cfg_consumer)
+aggregator = launch("aggregator-vm", cfg_aggregator)
+
+instances = {
+    "broker-vm":     broker,
+    "producer-vm":   producer,
+    "consumer-vm":   consumer,
+    "aggregator-vm": aggregator,
+}
+
+# ── Wait for all to be ACTIVE ────────────────────────────────────────────────
+print("\nWaiting for all instances to become ACTIVE...")
 time.sleep(10)
+for name, inst in instances.items():
+    instances[name] = wait_for_active(inst, name)
 
-while inst_status_prod == 'BUILD' or inst_status_dev == 'BUILD':
-    print ("Instance: "+instance_prod.name+" is in "+inst_status_prod+" state, sleeping for 5 seconds more...")
-    print ("Instance: "+instance_dev.name+" is in "+inst_status_dev+" state, sleeping for 5 seconds more...")
-    time.sleep(5)
-    instance_prod = nova.servers.get(instance_prod.id)
-    inst_status_prod = instance_prod.status
-    instance_dev = nova.servers.get(instance_dev.id)
-    inst_status_dev = instance_dev.status
+# ── Summary ──────────────────────────────────────────────────────────────────
+print("\n── Instance Summary ──────────────────────────────")
+for name, inst in instances.items():
+    for network in inst.networks[PRIVATE_NET]:
+        if re.match(r'\d+\.\d+\.\d+\.\d+', network):
+            print(f"  {inst.name}  →  {network}")
+            break
 
-ip_address_prod = None
-for network in instance_prod.networks[private_net]:
-    if re.match('\d+\.\d+\.\d+\.\d+', network):
-        ip_address_prod = network
-        break
-if ip_address_prod is None:
-    raise RuntimeError('No IP address assigned!')
-
-ip_address_dev = None
-for network in instance_dev.networks[private_net]:
-    if re.match('\d+\.\d+\.\d+\.\d+', network):
-        ip_address_dev = network
-        break
-if ip_address_dev is None:
-    raise RuntimeError('No IP address assigned!')
-
-print ("Instance: "+ instance_prod.name +" is in " + inst_status_prod + " state" + " ip address: "+ ip_address_prod)
-print ("Instance: "+ instance_dev.name +" is in " + inst_status_dev + " state" + " ip address: "+ ip_address_dev)
+print(f"\nBroker reachable at: pulsar://{broker_ip}:6650")
+print("All VMs ACTIVE.")
