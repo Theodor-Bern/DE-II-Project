@@ -14,6 +14,7 @@ import sys
 import json
 import time
 import datetime as dt
+import uuid
 import requests
 import pulsar
 
@@ -22,8 +23,14 @@ PULSAR_URL    = os.environ["PULSAR_URL"]
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
 DAYS_BACK     = int(os.environ.get("DAYS_BACK", "7"))
 TOPIC         = os.environ.get("TOPIC", "repos.raw")
+CONTROL_TOPIC = os.environ.get("CONTROL_TOPIC", "repos.raw.control")
 PER_PAGE      = 100   # GitHub max
 MAX_PAGES     = 10    # GitHub returns max 1000 results = 10 pages of 100
+
+# Unique id for this producer run. Consumers copy it into DONE events.
+RUN_ID        = os.environ.get("RUN_ID", str(uuid.uuid4()))
+DONE_TIMEOUT_SECONDS = int(os.environ.get("DONE_TIMEOUT_SECONDS", "900"))
+REQUIRED_STAGES = {"language", "commits", "tests"}
 
 GITHUB_API    = "https://api.github.com/search/repositories"
 
@@ -88,28 +95,123 @@ def date_range(days_back):
         yield (today - dt.timedelta(days=n)).isoformat()
 
 
+def wait_for_all_done(control_consumer, job_id, repo_id, timeout_seconds):
+    """
+    Wait until language, commits and tests have sent DONE for this job_id.
+
+    The control topic may contain DONE events from old runs or other jobs. Those
+    are acknowledged and ignored.
+    """
+    seen = set()
+    deadline = time.time() + timeout_seconds
+
+    while seen != REQUIRED_STAGES:
+        if time.time() > deadline:
+            missing = REQUIRED_STAGES - seen
+            raise TimeoutError(
+                f"Timed out waiting for repo_id={repo_id}, job_id={job_id}. Missing={sorted(missing)}"
+            )
+
+        try:
+            msg = control_consumer.receive(timeout_millis=10_000)
+        except pulsar.Timeout:
+            print(
+                f"  waiting for DONE repo_id={repo_id}: "
+                f"seen={sorted(seen)} missing={sorted(REQUIRED_STAGES - seen)}",
+                flush=True,
+            )
+            continue
+
+        try:
+            event = json.loads(msg.data().decode("utf-8"))
+            control_consumer.acknowledge(msg)
+
+            if event.get("type") != "DONE":
+                continue
+            if event.get("run_id") != RUN_ID:
+                continue
+            if event.get("job_id") != job_id:
+                continue
+
+            stage = event.get("stage")
+            if stage in REQUIRED_STAGES:
+                seen.add(stage)
+                status = event.get("status", "ok")
+                print(
+                    f"  DONE repo_id={repo_id} stage={stage} status={status} "
+                    f"({len(seen)}/{len(REQUIRED_STAGES)})",
+                    flush=True,
+                )
+
+        except Exception as e:
+            print(f"  error while reading control event: {e}", flush=True)
+            control_consumer.negative_acknowledge(msg)
+
 def main():
     print(f"Connecting to Pulsar at {PULSAR_URL}", flush=True)
+    print(f"RUN_ID={RUN_ID}", flush=True)
+
     client   = pulsar.Client(PULSAR_URL)
-    producer = client.create_producer(TOPIC)
+
+    producer = client.create_producer(
+        TOPIC,
+        max_pending_messages=100,
+        block_if_queue_full=True,
+    )
+
+     # Unique subscription so this producer run only waits on its own control stream.
+    control_consumer = client.subscribe(
+        CONTROL_TOPIC,
+        subscription_name=f"producer-control-{RUN_ID}",
+        initial_position=pulsar.InitialPosition.Latest,
+        consumer_type=pulsar.ConsumerType.Exclusive,
+    )
+
+
     print(f"Producing to topic '{TOPIC}', scanning {DAYS_BACK} days of history", flush=True)
+
+    print(f"Waiting for DONE events on '{CONTROL_TOPIC}'", flush=True)
 
     total = 0
     try:
         for date_str in date_range(DAYS_BACK):
             print(f"\n── {date_str} ─────────────────", flush=True)
             day_count = 0
+
             for repo in fetch_day(date_str):
+                repo_id = str(repo["id"])
+                job_id = f"{RUN_ID}:{repo_id}"
+
+                # These fields are copied by consumers into DONE events.
+                repo["run_id"] = RUN_ID
+                repo["job_id"] = job_id
+
                 payload = json.dumps(repo).encode("utf-8")
                 producer.send(
                     payload,
-                    properties={"repo_id": str(repo["id"]), "fetched_on": date_str},
+                    properties={
+                        "repo_id": repo_id,
+                        "job_id": job_id,
+                        "run_id": RUN_ID,
+                        "fetched_on": date_str,
+                    },
                 )
+
+                print(f"  published repo_id={repo_id} {repo.get('full_name')}; waiting for 3 DONEs", flush=True)
+                wait_for_all_done(control_consumer, job_id, repo_id, DONE_TIMEOUT_SECONDS)
+
                 day_count += 1
                 total += 1
-            print(f"  → published {day_count} repos for {date_str}  (total: {total})", flush=True)
-        print(f"\nDone. Total repos published: {total}", flush=True)
+                print(f"  repo_id={repo_id} fully processed; total={total}", flush=True)
+
+            print(f"  → completed {day_count} repos for {date_str}  (total: {total})", flush=True)
+
+        print(f"\nDone. Total repos fully processed: {total}", flush=True)
+
+    except KeyboardInterrupt:
+        print(f"\nStopped. Total repos fully processed: {total}", flush=True)
     finally:
+        control_consumer.close()
         producer.close()
         client.close()
 

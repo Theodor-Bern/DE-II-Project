@@ -20,6 +20,7 @@ PULSAR_URL    = os.environ["PULSAR_URL"]
 GITHUB_TOKEN  = os.environ["GITHUB_TOKEN"]
 INPUT_TOPIC   = os.environ.get("INPUT_TOPIC",  "repos.raw")
 OUTPUT_TOPIC  = os.environ.get("OUTPUT_TOPIC", "commit-topic")
+CONTROL_TOPIC = os.environ.get("CONTROL_TOPIC", "repos.raw.control")
 SUBSCRIPTION  = os.environ.get("SUBSCRIPTION", "commits-enricher-sub")
 LOG_EVERY     = int(os.environ.get("LOG_EVERY", "50"))
 
@@ -76,18 +77,49 @@ def count_commits(owner_login, repo_name):
     items = resp.json()
     return len(items) if isinstance(items, list) else 0
 
+def send_done(control_producer, repo, stage, status="ok", error=None):
+    """Send application-level DONE event to the producer."""
+    event = {
+        "type": "DONE",
+        "run_id": repo.get("run_id"),
+        "job_id": repo.get("job_id"),
+        "repo_id": str(repo.get("id")),
+        "full_name": repo.get("full_name"),
+        "stage": stage,
+        "status": status,
+        "error": str(error) if error else None,
+        "ts": time.time(),
+    }
+    control_producer.send(
+        json.dumps(event).encode("utf-8"),
+        properties={
+            "type": "DONE",
+            "stage": stage,
+            "status": status,
+            "run_id": str(repo.get("run_id")),
+            "job_id": str(repo.get("job_id")),
+            "repo_id": str(repo.get("id")),
+        },
+    )
+
 
 def main():
     print(f"Connecting to Pulsar at {PULSAR_URL}", flush=True)
     client = pulsar.Client(PULSAR_URL)
+
     consumer = client.subscribe(
         INPUT_TOPIC,
         subscription_name=SUBSCRIPTION,
         consumer_type=pulsar.ConsumerType.Shared,
         initial_position=pulsar.InitialPosition.Earliest,
+        receiver_queue_size=1,
     )
+
     producer = client.create_producer(OUTPUT_TOPIC)
+    control_producer = client.create_producer(CONTROL_TOPIC)
+
     print(f"Subscribed to '{INPUT_TOPIC}' → producing to '{OUTPUT_TOPIC}'", flush=True)
+    print(f"Sending DONE events to '{CONTROL_TOPIC}'", flush=True)
 
     processed = 0
     skipped = 0
@@ -100,12 +132,14 @@ def main():
                 name = repo.get("full_name", "").split("/")[-1]
 
                 if not owner or not name:
+                    send_done(control_producer, repo, stage="commits", status="skipped")
                     consumer.acknowledge(msg)
                     skipped += 1
                     continue
 
                 commits = count_commits(owner, name)
                 if commits is None:
+                    send_done(control_producer, repo, stage="commits", status="skipped")
                     consumer.acknowledge(msg)
                     skipped += 1
                     continue
@@ -116,11 +150,17 @@ def main():
                     "language":     repo.get("language"),
                     "commit_count": commits,
                 }
+
+                # Publish result first.
                 producer.send(
                     json.dumps(enriched).encode("utf-8"),
                     properties={"repo_id": str(repo.get("id"))},
                 )
+
+                # Then notify producer and only after that ack repos.raw.
+                send_done(control_producer, repo, stage="commits", status="ok")
                 consumer.acknowledge(msg)
+
                 processed += 1
 
                 if (processed + skipped) % LOG_EVERY == 0:
@@ -138,10 +178,10 @@ def main():
     except KeyboardInterrupt:
         print(f"\nFinal: processed={processed}, skipped={skipped}", flush=True)
     finally:
+        control_producer.close()
         producer.close()
         consumer.close()
         client.close()
-
 
 if __name__ == "__main__":
     main()

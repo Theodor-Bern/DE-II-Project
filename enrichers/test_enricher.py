@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-Test enricher: subscribes to `repos.raw`, fetches the repo's file tree
-(single API call), detects test files and CI configuration, and publishes
-to two topics:
-  - test-topic         : repos with tests (for Q3)
-  - test-and-ci-topic  : repos with both tests AND CI (for Q4)
+Test enricher with simple DONE-control logic.
 
-A single tree call replaces what would otherwise be two separate enrichers,
-halving Core API usage.
+Subscribes to `repos.raw`, fetches the repo's file tree, detects test files and
+CI configuration, publishes to the output topics, sends a DONE event to
+`repos.raw.control`, and then acknowledges the original `repos.raw` message.
 """
 import os
 import re
@@ -22,6 +19,7 @@ GITHUB_TOKEN        = os.environ["GITHUB_TOKEN"]
 INPUT_TOPIC         = os.environ.get("INPUT_TOPIC",         "repos.raw")
 TEST_TOPIC          = os.environ.get("TEST_TOPIC",          "test-topic")
 TEST_AND_CI_TOPIC   = os.environ.get("TEST_AND_CI_TOPIC",   "test-and-ci-topic")
+CONTROL_TOPIC       = os.environ.get("CONTROL_TOPIC",       "repos.raw.control")
 SUBSCRIPTION        = os.environ.get("SUBSCRIPTION",        "test-enricher-sub")
 LOG_EVERY           = int(os.environ.get("LOG_EVERY", "50"))
 
@@ -119,19 +117,51 @@ def fetch_tree(owner_login, repo_name, default_branch):
     return resp.json().get("tree", [])
 
 
+def send_done(control_producer, repo, stage, status="ok", error=None):
+    """Send application-level DONE event to the producer."""
+    event = {
+        "type": "DONE",
+        "run_id": repo.get("run_id"),
+        "job_id": repo.get("job_id"),
+        "repo_id": str(repo.get("id")),
+        "full_name": repo.get("full_name"),
+        "stage": stage,
+        "status": status,
+        "error": str(error) if error else None,
+        "ts": time.time(),
+    }
+    control_producer.send(
+        json.dumps(event).encode("utf-8"),
+        properties={
+            "type": "DONE",
+            "stage": stage,
+            "status": status,
+            "run_id": str(repo.get("run_id")),
+            "job_id": str(repo.get("job_id")),
+            "repo_id": str(repo.get("id")),
+        },
+    )
+
+
 def main():
     print(f"Connecting to Pulsar at {PULSAR_URL}", flush=True)
     client = pulsar.Client(PULSAR_URL)
+
     consumer = client.subscribe(
         INPUT_TOPIC,
         subscription_name=SUBSCRIPTION,
         consumer_type=pulsar.ConsumerType.Shared,
         initial_position=pulsar.InitialPosition.Earliest,
+        receiver_queue_size=1,
     )
+
     test_producer    = client.create_producer(TEST_TOPIC)
     test_ci_producer = client.create_producer(TEST_AND_CI_TOPIC)
+    control_producer = client.create_producer(CONTROL_TOPIC)
+
     print(f"Subscribed to '{INPUT_TOPIC}'", flush=True)
     print(f"Publishing to '{TEST_TOPIC}' and '{TEST_AND_CI_TOPIC}'", flush=True)
+    print(f"Sending DONE events to '{CONTROL_TOPIC}'", flush=True)
 
     stats = {"total": 0, "skipped": 0, "test_only": 0, "test_and_ci": 0, "neither": 0, "ci_only": 0}
 
@@ -145,12 +175,14 @@ def main():
                 branch = repo.get("default_branch")
 
                 if not owner or not name:
+                    send_done(control_producer, repo, stage="tests", status="skipped")
                     consumer.acknowledge(msg)
                     stats["skipped"] += 1
                     continue
 
                 tree = fetch_tree(owner, name, branch)
                 if tree is None:
+                    send_done(control_producer, repo, stage="tests", status="skipped")
                     consumer.acknowledge(msg)
                     stats["skipped"] += 1
                     continue
@@ -188,7 +220,10 @@ def main():
                 else:
                     stats["neither"] += 1
 
+                # Output publishing is done. Now notify producer, then ack repos.raw.
+                send_done(control_producer, repo, stage="tests", status="ok")
                 consumer.acknowledge(msg)
+
                 stats["total"] += 1
 
                 if stats["total"] % LOG_EVERY == 0:
@@ -206,6 +241,7 @@ def main():
     except KeyboardInterrupt:
         print(f"\nFinal stats: {stats}", flush=True)
     finally:
+        control_producer.close()
         test_producer.close()
         test_ci_producer.close()
         consumer.close()
