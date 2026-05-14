@@ -1,6 +1,6 @@
 services:
   commits-enricher:
-    image: theodorafc02/de-2-project:latest
+    image: theodorafc02/de-2-enrichers:latest
     container_name: commits-enricher
     env_file:
       - /home/ubuntu/.broker_env
@@ -10,13 +10,11 @@ services:
       OUTPUT_TOPIC: "commit-topic"
       SUBSCRIPTION: "commits-enricher-sub"
       LOG_EVERY:    "50"
-    volumes:
-      - ./commits_enricher.py:/app/commits_enricher.py:ro
-    command: python /app/commits_enricher.py
+    command: python commits_enricher.py
     restart: unless-stopped
 
   test-enricher:
-    image: theodorafc02/de-2-project:latest
+    image: theodorafc02/de-2-enrichers:latest
     container_name: test-enricher
     env_file:
       - /home/ubuntu/.broker_env
@@ -27,7 +25,5 @@ services:
       TEST_AND_CI_TOPIC: "test-and-ci-topic"
       SUBSCRIPTION:      "test-enricher-sub"
       LOG_EVERY:         "50"
-    volumes:
-      - ./test_enricher.py:/app/test_enricher.py:ro
-    command: python /app/test_enricher.py
+    command: python test_enricher.py
     restart: unless-stopped

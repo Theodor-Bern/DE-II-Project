@@ -1,6 +1,6 @@
 services:
   language-aggregator:
-    image: theodorafc02/de-2-project:latest
+    image: theodorafc02/de-2-aggregators:latest
     container_name: language-aggregator
     env_file:
       - /home/ubuntu/.broker_env
@@ -9,13 +9,11 @@ services:
       SUBSCRIPTION: "language-aggregator-sub"
       TOP_N:        "10"
       REPORT_EVERY: "100"
-    volumes:
-      - ./language_aggregator.py:/app/language_aggregator.py:ro
-    command: python /app/language_aggregator.py
+    command: python language_aggregator.py
     restart: unless-stopped
 
   commit-aggregator:
-    image: theodorafc02/de-2-project:latest
+    image: theodorafc02/de-2-aggregators:latest
     container_name: commit-aggregator
     env_file:
       - /home/ubuntu/.broker_env
@@ -24,13 +22,11 @@ services:
       SUBSCRIPTION: "commit-aggregator-sub"
       TOP_N:        "10"
       REPORT_EVERY: "50"
-    volumes:
-      - ./commit_aggregator.py:/app/commit_aggregator.py:ro
-    command: python /app/commit_aggregator.py
+    command: python commit_aggregator.py
     restart: unless-stopped
 
   test-aggregator:
-    image: theodorafc02/de-2-project:latest
+    image: theodorafc02/de-2-aggregators:latest
     container_name: test-aggregator
     env_file:
       - /home/ubuntu/.broker_env
@@ -39,13 +35,11 @@ services:
       SUBSCRIPTION: "test-aggregator-sub"
       TOP_N:        "10"
       REPORT_EVERY: "50"
-    volumes:
-      - ./test_aggregator.py:/app/test_aggregator.py:ro
-    command: python /app/test_aggregator.py
+    command: python test_aggregator.py
     restart: unless-stopped
 
   ci-aggregator:
-    image: theodorafc02/de-2-project:latest
+    image: theodorafc02/de-2-aggregators:latest
     container_name: ci-aggregator
     env_file:
       - /home/ubuntu/.broker_env
@@ -54,7 +48,5 @@ services:
       SUBSCRIPTION: "ci-aggregator-sub"
       TOP_N:        "10"
       REPORT_EVERY: "25"
-    volumes:
-      - ./ci_aggregator.py:/app/ci_aggregator.py:ro
-    command: python /app/ci_aggregator.py
+    command: python ci_aggregator.py
     restart: unless-stopped
