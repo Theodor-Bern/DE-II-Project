@@ -1,7 +1,4 @@
 #cloud-config
-# Broker VM — installs Docker. docker-compose.yml is SCP'd from the
-# controller after this VM signals .cloud-init-done.
-
 package_update: true
 package_upgrade: false
 
@@ -11,11 +8,10 @@ packages:
   - gnupg
   - netcat-openbsd
 
-bootcmd:
-  - mkdir -p /home/ubuntu
-  - chown ubuntu:ubuntu /home/ubuntu
-
 runcmd:
+  # ── Ensure ubuntu owns its home dir ────────────────────────────────────────
+  - chown -R ubuntu:ubuntu /home/ubuntu
+
   # ── Install Docker via official repo ───────────────────────────────────────
   - install -m 0755 -d /etc/apt/keyrings
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
@@ -28,12 +24,10 @@ runcmd:
   - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
   - usermod -aG docker ubuntu
   - systemctl enable --now docker
-
-  # ── Pre-pull Pulsar image so first compose-up is fast ──────────────────────
   - docker pull apachepulsar/pulsar:3.2.0
-
-  # ── Marker file so controller knows provisioning finished ──────────────────
   - touch /home/ubuntu/.cloud-init-done
   - chown ubuntu:ubuntu /home/ubuntu/.cloud-init-done
 
 final_message: "Broker VM provisioned."
+
+

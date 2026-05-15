@@ -11,10 +11,6 @@ packages:
   - gnupg
   - netcat-openbsd
 
-bootcmd:
-  - mkdir -p /home/ubuntu
-  - chown ubuntu:ubuntu /home/ubuntu
-
 write_files:
   - path: /etc/profile.d/broker.sh
     permissions: '0755'
@@ -23,13 +19,16 @@ write_files:
       export PULSAR_URL=pulsar://{{BROKER_IP}}:6650
 
   - path: /home/ubuntu/.broker_env
-    owner: ubuntu:ubuntu
     permissions: '0644'
     content: |
       BROKER_IP={{BROKER_IP}}
       PULSAR_URL=pulsar://{{BROKER_IP}}:6650
 
 runcmd:
+  # ── Fix ownership AFTER users module has created the ubuntu user ───────────
+  - chown -R ubuntu:ubuntu /home/ubuntu
+
+  # ── Install Docker via official repo ───────────────────────────────────────
   - install -m 0755 -d /etc/apt/keyrings
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
   - chmod a+r /etc/apt/keyrings/docker.asc

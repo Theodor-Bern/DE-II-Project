@@ -34,8 +34,6 @@ die()  { echo -e "\033[1;31m[collect]\033[0m $*"; exit 1; }
 [[ -f "$SSH_KEY" ]]   || die "SSH key not found at $SSH_KEY"
 [[ -f "$INVENTORY" ]] || die "Inventory not found at $INVENTORY — has deploy.sh run?"
 
-chmod 600 "$SSH_KEY"
-
 # shellcheck disable=SC1090
 source "$INVENTORY"
 [[ -n "${AGGREGATOR_IP:-}" ]] || die "AGGREGATOR_IP missing from inventory"

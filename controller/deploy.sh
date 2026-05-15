@@ -24,6 +24,7 @@ SSH_OPTS=(-i "$SSH_KEY"
           -o LogLevel=ERROR)
 
 OPENRC="${OPENRC:-/openrc.sh}"
+SECRETS_FILE="${SECRETS_FILE:-/secrets/.openstack-env}"
 TOKENS_FILE="${TOKENS_FILE:-/tokens/.github_tokens}"
 INVENTORY="${INVENTORY:-/controller/state/inventory.env}"
 
@@ -40,12 +41,25 @@ die()  { echo -e "\033[1;31m[deploy]\033[0m $*"; exit 1; }
 [[ -f "$SSH_KEY" ]]     || die "SSH key not found at $SSH_KEY (mount ~/.ssh into /root/.ssh)"
 [[ -f "$TOKENS_FILE" ]] || die "GitHub tokens file not found at $TOKENS_FILE"
 
-chmod 600 "$SSH_KEY"
+# Verify key permissions are tight enough that ssh won't refuse it.
+# We can't chmod on read-only mounts; rely on host-side permissions.
+perms=$(stat -c '%a' "$SSH_KEY" 2>/dev/null || echo "")
+if [[ -n "$perms" && "$perms" != "600" && "$perms" != "400" ]]; then
+    warn "SSH key $SSH_KEY has permissions $perms — ssh will likely refuse it."
+    warn "Run on the host: chmod 600 ~/.ssh/<keyname>"
+fi
 
 # ── Phase 1: provision VMs ───────────────────────────────────────────────────
 log "Sourcing OpenStack credentials"
 # shellcheck disable=SC1090
 source "$OPENRC"
+
+# Load secrets (OS_PASSWORD) from separate file if present
+if [[ -f "$SECRETS_FILE" ]]; then
+    log "Loading secrets from $SECRETS_FILE"
+    # shellcheck disable=SC1090
+    set -a; source "$SECRETS_FILE"; set +a
+fi
 
 log "Running start_instances.py — this provisions broker first, then the rest"
 python3 /controller/start_instances.py

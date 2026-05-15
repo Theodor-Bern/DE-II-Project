@@ -4,7 +4,7 @@ Provisions the 4-VM cluster on UPPMAX OpenStack:
 
   Phase 1: Launch broker VM. Wait for IP.
   Phase 2: Inject BROKER_IP into the other cloud-init files. Launch the rest.
-  Phase 3: Wait until all 4 are ACTIVE, print summary.
+  Phase 3: Wait until all 4 are ACTIVE *and* have a private IP, print summary.
 
 Writes a shell-sourceable inventory file (default: /controller/inventory.env)
 that deploy.sh consumes:
@@ -79,30 +79,36 @@ def launch(name, userdata_string):
     )
 
 
+def first_ipv4(instance):
+    """Return the first IPv4 on PRIVATE_NET, or None if not bound yet."""
+    nets = instance.networks or {}
+    addrs = nets.get(PRIVATE_NET, [])
+    for n in addrs:
+        if re.match(r'\d+\.\d+\.\d+\.\d+', n):
+            return n
+    return None
+
+
 def wait_for_ip(instance):
+    """Poll until the instance has a private IPv4 address. Returns (ip, instance)."""
     while True:
         updated = nova.servers.get(instance.id)
-        if updated.networks.get(PRIVATE_NET):
-            for n in updated.networks[PRIVATE_NET]:
-                if re.match(r'\d+\.\d+\.\d+\.\d+', n):
-                    return n, updated
+        ip = first_ipv4(updated)
+        if ip:
+            return ip, updated
         time.sleep(5)
 
 
 def wait_for_active(instance, name):
+    """Poll until status == ACTIVE. Returns updated instance."""
     while True:
         updated = nova.servers.get(instance.id)
         if updated.status == 'ACTIVE':
             return updated
+        if updated.status == 'ERROR':
+            sys.exit(f"ERROR: {name} entered ERROR state")
         print(f"  {name} is in {updated.status} state...", flush=True)
         time.sleep(5)
-
-
-def first_ipv4(instance):
-    for n in instance.networks[PRIVATE_NET]:
-        if re.match(r'\d+\.\d+\.\d+\.\d+', n):
-            return n
-    return None
 
 
 # ── Phase 1: broker ───────────────────────────────────────────────────────────
@@ -131,11 +137,14 @@ instances = {
     "aggregator": aggregator,
 }
 
-# ── Phase 3: wait for ACTIVE ─────────────────────────────────────────────────
-print("\nWaiting for all instances to become ACTIVE...", flush=True)
+# ── Phase 3: wait for ACTIVE *and* network binding ───────────────────────────
+print("\nWaiting for all instances to become ACTIVE and get a private IP...", flush=True)
 time.sleep(10)
 for role, inst in instances.items():
-    instances[role] = wait_for_active(inst, role)
+    inst = wait_for_active(inst, role)
+    # ACTIVE != network bound — poll until Neutron has attached the port
+    _, inst = wait_for_ip(inst)
+    instances[role] = inst
 
 # ── Summary + inventory ──────────────────────────────────────────────────────
 print("\n── Instance Summary ──────────────────────────────", flush=True)
