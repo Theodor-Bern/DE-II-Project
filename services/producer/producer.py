@@ -44,6 +44,11 @@ HEADERS = {
 KEEP_FIELDS = ["id", "full_name", "language", "created_at", "pushed_at",
                "default_branch", "stargazers_count", "forks_count"]
 
+TRANSIENT_STATUSES = {500, 502, 503, 504}
+RETRY_ATTEMPTS = 5
+RETRY_BASE_SECONDS = 2
+
+
 
 def keep(repo):
     """Trim a repo dict down to fields we care about."""
@@ -62,31 +67,83 @@ def respect_rate_limit(resp):
         time.sleep(wait)
 
 
+def _get_with_retry(url, **kwargs):
+    """GET with bounded exponential backoff on transient network/5xx errors."""
+    last_exc = None
+    last_status = None
+
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            resp = requests.get(url, **kwargs)
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last_exc = exc
+
+            if attempt == RETRY_ATTEMPTS:
+                break
+
+            wait = RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+            print(
+                f"  [retry] {type(exc).__name__} on attempt "
+                f"{attempt}/{RETRY_ATTEMPTS}, sleeping {wait}s",
+                flush=True,
+            )
+            time.sleep(wait)
+            continue
+
+        if resp.status_code in TRANSIENT_STATUSES:
+            last_status = resp.status_code
+
+            if attempt == RETRY_ATTEMPTS:
+                break
+
+            wait = RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+            print(
+                f"  [retry] HTTP {resp.status_code} on attempt "
+                f"{attempt}/{RETRY_ATTEMPTS}, sleeping {wait}s",
+                flush=True,
+            )
+            time.sleep(wait)
+            continue
+
+        return resp
+
+    if last_exc:
+        raise last_exc
+
+    raise RuntimeError(f"GET {url} kept returning transient HTTP status {last_status}")
+
 def fetch_day(date_str):
     """Yield trimmed repo dicts for all repos created on `date_str`."""
     query = f"created:{date_str}..{date_str}"
     for page in range(1, MAX_PAGES + 1):
-        params = {"q": query, "per_page": PER_PAGE, "page": page, "sort": "stars", "order": "desc"}
-        resp = requests.get(GITHUB_API, headers=HEADERS, params=params, timeout=30)
+        params = {
+            "q": query,
+            "per_page": PER_PAGE,
+            "page": page,
+            "sort": "stars",
+            "order": "desc",
+        }
+
+        resp = _get_with_retry(GITHUB_API, headers=HEADERS, params=params, timeout=30)
 
         if resp.status_code == 403 and "rate limit" in resp.text.lower():
             respect_rate_limit(resp)
-            resp = requests.get(GITHUB_API, headers=HEADERS, params=params, timeout=30)
+            resp = _get_with_retry(GITHUB_API, headers=HEADERS, params=params, timeout=30)
 
         resp.raise_for_status()
         data = resp.json()
         items = data.get("items", [])
+
         if not items:
-            return  # no more results for this day
+            return
+
         for repo in items:
             yield keep(repo)
 
-        # If we got fewer than per_page, there's no next page
         if len(items) < PER_PAGE:
             return
 
         respect_rate_limit(resp)
-
 
 def date_range(days_back):
     """Yield ISO date strings from `days_back` ago up to (but not including) today, oldest first."""

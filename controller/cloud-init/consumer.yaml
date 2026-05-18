@@ -41,7 +41,7 @@ runcmd:
   - usermod -aG docker ubuntu
   - systemctl enable --now docker
 
-  - docker pull theodorafc02/de2-enrichers:latest
+  - docker pull theodorafc02/de-2-enrichers:latest
 
   - |
     echo "Waiting for broker at {{BROKER_IP}}:6650..."

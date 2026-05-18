@@ -42,7 +42,7 @@ runcmd:
   - systemctl enable --now docker
 
   # Pre-pull our service image so first compose-up is instant
-  - docker pull theodorafc02/de2-producer:latest
+  - docker pull theodorafc02/de-2-producer:latest
 
   # Wait for broker before signalling ready
   - |
