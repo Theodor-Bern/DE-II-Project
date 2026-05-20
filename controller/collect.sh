@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# collect.sh — fetch aggregator logs from the aggregator VM.
+# collect.sh — fetch aggregator logs and results from the aggregator VM.
 #
 # Run this AFTER deploy.sh has set up the cluster. Can be run repeatedly —
 # each invocation overwrites the previous snapshot with the latest log content.
@@ -42,10 +42,9 @@ mkdir -p "$RESULTS_DIR"
 timestamp=$(date +"%Y%m%d-%H%M%S")
 snapshot_dir="$RESULTS_DIR/snapshot-$timestamp"
 mkdir -p "$snapshot_dir"
-
 log "Snapshot directory: $snapshot_dir"
 
-# ── Fetch logs per container ────────────────────────────────────────────────
+# ── Fetch logs per container ─────────────────────────────────────────────────
 containers=(
     language-aggregator
     commit-aggregator
@@ -62,7 +61,7 @@ for c in "${containers[@]}"; do
     }
 done
 
-# ── Also grab the "last reported top-N" from each log for a quick summary ───
+# ── Also grab the "last reported top-N" from each log for a quick summary ────
 summary="$snapshot_dir/SUMMARY.txt"
 {
     echo "── Snapshot $timestamp ─────────────────────────────────────────────"
@@ -71,12 +70,76 @@ summary="$snapshot_dir/SUMMARY.txt"
         echo "═══════════════════════════════════════════════════════════════════"
         echo "  $c — latest top-N"
         echo "═══════════════════════════════════════════════════════════════════"
-        # The aggregator scripts print "── Top N ... ──" blocks. Grab the last one.
         awk '/── Top/{block=""} {block=block $0 "\n"} END{printf "%s", block}' \
             "$snapshot_dir/$c.log" || echo "(no output)"
         echo ""
     done
 } > "$summary"
 
-log "Done. Snapshot at $snapshot_dir"
-log "Quick summary: $summary"
+# ── Fetch JSON results from each aggregator container ────────────────────────
+log "Fetching JSON result files..."
+
+json_files=(
+    "results_q1.json"
+    "results_q2.json"
+    "results_q3.json"
+    "results_q4.json"
+)
+
+for f in "${json_files[@]}"; do
+    out="$snapshot_dir/$f"
+    log "  fetching $f → $out"
+    ssh "${SSH_OPTS[@]}" "$SSH_USER@$AGGREGATOR_IP" \
+        "cat /home/ubuntu/aggregator/$f 2>/dev/null" > "$out" || {
+        log "    (warning) $f not found — has the aggregator been stopped yet?"
+    }
+done
+
+# ── Merge all JSON files into one results.json ────────────────────────────────
+log "Merging JSON files into results.json..."
+
+python3 - <<PYEOF
+import json, os
+
+snapshot = "$snapshot_dir"
+files = {
+    "q1_top_languages":    "results_q1.json",
+    "q2_top_commits":      "results_q2.json",
+    "q3_tdd_languages":    "results_q3.json",
+    "q4_devops_languages": "results_q4.json",
+}
+
+merged = {}
+for key, fname in files.items():
+    path = os.path.join(snapshot, fname)
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        with open(path) as f:
+            data = json.load(f)
+        merged[key] = data.get(key, [])
+    else:
+        print(f"  (warning) {fname} missing or empty, skipping {key}")
+        merged[key] = []
+
+out_path = os.path.join(snapshot, "results.json")
+with open(out_path, "w") as f:
+    json.dump(merged, f, indent=2)
+
+print(f"  results.json written to {out_path}")
+PYEOF
+
+# ── Generate plots ────────────────────────────────────────────────────────────
+if [[ -f "$snapshot_dir/results.json" ]]; then
+    log "Generating plots..."
+    RESULTS_FILE="$snapshot_dir/results.json" \
+    FIGURES_DIR="$snapshot_dir/figures" \
+    python3 /controller/plot.py && log "Plots saved to $snapshot_dir/figures/"
+else
+    log "(warning) results.json not found, skipping plots"
+fi
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+log "Done."
+log "  Logs:    $snapshot_dir/"
+log "  Summary: $summary"
+log "  Results: $snapshot_dir/results.json"
+log "  Figures: $snapshot_dir/figures/"
