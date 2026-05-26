@@ -1,1 +1,2 @@
 pulsar-client==3.5.0
+matplotlib
