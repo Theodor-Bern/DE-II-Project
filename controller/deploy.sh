@@ -51,10 +51,8 @@ fi
 
 # ── Phase 1: provision VMs ───────────────────────────────────────────────────
 log "Sourcing OpenStack credentials"
-# shellcheck disable=SC1090
 source "$OPENRC"
 
-# Load secrets (OS_PASSWORD) from separate file if present
 if [[ -f "$SECRETS_FILE" ]]; then
     log "Loading secrets from $SECRETS_FILE"
     # shellcheck disable=SC1090
@@ -66,7 +64,6 @@ python3 /controller/start_instances.py
 
 [[ -f "$INVENTORY" ]] || die "Inventory not written — start_instances.py failed"
 
-# shellcheck disable=SC1090
 source "$INVENTORY"
 log "Inventory loaded:"
 log "  BROKER_IP=$BROKER_IP"
@@ -122,10 +119,8 @@ start_service() {
         "cd /home/ubuntu/$role && sudo docker compose up -d"
 }
 
-# Broker first
 start_service "$BROKER_IP" broker
 
-# Wait until Pulsar is actually accepting connections (not just container up)
 log "Waiting for Pulsar broker to accept connections..."
 deadline=$(( $(date +%s) + BROKER_WAIT_SECS ))
 while (( $(date +%s) < deadline )); do

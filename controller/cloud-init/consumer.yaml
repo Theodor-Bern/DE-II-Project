@@ -1,5 +1,5 @@
 #cloud-config
-# Consumer VM — runs the enrichers (commits + test).
+# Consumer VM runs the enrichers (commits + test).
 # Compose file and tokens are SCP'd from the controller after boot.
 
 package_update: true

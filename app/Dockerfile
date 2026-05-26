@@ -1,5 +1,4 @@
 # ─── Stage 1: builder ────────────────────────────────────────────────────────
-# Installs dependencies in an isolated venv so build tools don't bloat the final image.
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
@@ -19,12 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────────────
-# Minimal runtime — just Python + the venv from stage 1 + our application code.
+
 FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Copy the prebuilt venv from the builder stage
 COPY --from=builder /venv /venv
 ENV PATH="/venv/bin:$PATH"
 
@@ -32,5 +30,4 @@ ENV PATH="/venv/bin:$PATH"
 # at runtime, so the image stays generic. (For production we'd COPY the code in,
 # but mounting makes iteration faster during development.)
 
-# Default command does nothing — each compose file overrides with the right script.
 CMD ["python", "--version"]

@@ -9,7 +9,6 @@ packages:
   - netcat-openbsd
 
 runcmd:
-  # ── Ensure ubuntu owns its home dir ────────────────────────────────────────
   - chown -R ubuntu:ubuntu /home/ubuntu
 
   # ── Install Docker via official repo ───────────────────────────────────────

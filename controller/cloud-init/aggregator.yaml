@@ -25,7 +25,6 @@ write_files:
       PULSAR_URL=pulsar://{{BROKER_IP}}:6650
 
 runcmd:
-  # ── Fix ownership AFTER users module has created the ubuntu user ───────────
   - chown -R ubuntu:ubuntu /home/ubuntu
 
   # ── Install Docker via official repo ───────────────────────────────────────
