@@ -1,3 +1,13 @@
+# Local secrets and run state — never commit
+.env
+*.pem
+.github_tokens
+openrc.sh
+results/
+state/
+inventory.env
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
