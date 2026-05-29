@@ -1,7 +1,3 @@
-#cloud-config
-# Aggregator VM — runs language, commit, test, and ci aggregators.
-# Compose file is SCP'd in by deploy.sh after boot.
-
 package_update: true
 package_upgrade: false
 
