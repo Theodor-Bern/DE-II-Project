@@ -1,6 +1,3 @@
-#cloud-config
-# Broker VM — runs Apache Pulsar in standalone mode.
-
 package_update: true
 package_upgrade: false
 
