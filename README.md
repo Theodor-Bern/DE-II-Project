@@ -16,9 +16,6 @@ Here is a step-to-step guide which shows how to set up the architecture correctl
 ### 1. Start the controller VM on Openstack
 Launch a small flavoured VM by pasting the cloud-init script in the Configuration step on Openstack: controller.yaml. The script is located in the /controller/cloud-init/controller.yaml:
 
-   ```
-   https://raw.githubusercontent.com/Theodor-Bern/DE-II-Project/main/controller/cloud-init/control$
-   ```
 Cloud-init runs in the background for about ~5 minutes. Don't ssh in yet.
 
 ### 2. SSH in to controller VM
