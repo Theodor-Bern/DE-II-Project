@@ -55,8 +55,7 @@ In Horizon:
 
 NOTE: YOU NEED TO NAME IT AS GITHUB_TOKEN_N OTHERWISE IT WILL NOT WORK
 
-###7. Configure paths:
-## 8. Configure paths
+## 7. Configure paths
 
 On the controller VM:
 
