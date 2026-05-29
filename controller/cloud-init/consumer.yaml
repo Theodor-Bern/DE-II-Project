@@ -1,7 +1,3 @@
-#cloud-config
-# Consumer VM — runs the commits and test enrichers.
-# Compose file and tokens are SCP'd in by deploy.sh after boot.
-
 package_update: true
 package_upgrade: false
 
