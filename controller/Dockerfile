@@ -1,14 +1,3 @@
-# syntax=docker/dockerfile:1.6
-#
-# de2-controller — bootstraps and manages the 4-VM analytics cluster.
-#
-# Build (from repo root):
-#   docker build -f controller/Dockerfile -t theodorafc02/de2-controller:latest .
-#
-# Run via the wrapper in the repo root:
-#   ./run.sh deploy
-#   ./run.sh collect
-
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
