@@ -1,7 +1,3 @@
-#cloud-config
-# Producer VM — installs Docker, pulls the producer image, writes BROKER_IP
-# to env. Compose file and tokens are SCP'd in by deploy.sh after boot.
-
 package_update: true
 package_upgrade: false
 
