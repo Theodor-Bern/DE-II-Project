@@ -1,7 +1,3 @@
-# syntax=docker/dockerfile:1.6
-# Multi-stage so the gcc toolchain (needed only to build pulsar-client's
-# C extensions) doesn't ship in the runtime image.
-
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
